@@ -1,0 +1,8 @@
+README.md
+setup.py
+savitzky_golay.egg-info/PKG-INFO
+savitzky_golay.egg-info/SOURCES.txt
+savitzky_golay.egg-info/dependency_links.txt
+savitzky_golay.egg-info/not-zip-safe
+savitzky_golay.egg-info/requires.txt
+savitzky_golay.egg-info/top_level.txt

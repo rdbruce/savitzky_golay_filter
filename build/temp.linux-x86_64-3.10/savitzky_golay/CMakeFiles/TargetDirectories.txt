@@ -1,0 +1,3 @@
+/home/robert/C++ pile/SAVGOL/build/temp.linux-x86_64-3.10/savitzky_golay/CMakeFiles/savitzky_golay.dir
+/home/robert/C++ pile/SAVGOL/build/temp.linux-x86_64-3.10/savitzky_golay/CMakeFiles/edit_cache.dir
+/home/robert/C++ pile/SAVGOL/build/temp.linux-x86_64-3.10/savitzky_golay/CMakeFiles/rebuild_cache.dir

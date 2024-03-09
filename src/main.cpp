@@ -7,6 +7,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
+#include <thread>
+#include <deque>
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
@@ -17,131 +19,150 @@ using namespace std;
 
 namespace py = pybind11;
 
-Eigen::VectorXi makeXWin(const int& win_size)
+class SavGol
 {
-    Eigen::VectorXi xWin(win_size);
-    for(int i = 0; i < win_size; i++)
-    {
-        xWin(i) = i + (1 - win_size)/2;
-    }
-    return xWin;
-}
+public:
+    // Python input
+    Eigen::VectorXd data_in;
+    int window_size;
+    int smoothing_degree;
+    int num_elements;
+    int return_degree;
+    bool threaded;
 
-Eigen::MatrixXd makeConCo(const Eigen::VectorXi& xWin, const int& win_size, const int& deg)
-{
-    Eigen::MatrixXd van(win_size, deg + 1);
-    for(int j = 0; j <= deg; j++)
-    {
-        for(int i = 0; i < win_size; i++)
-        {
-            van(i, j) = pow(xWin(i), j);
-        }
-    }
-
+    // C++ vars
+    Eigen::VectorXi xWin;
     Eigen::MatrixXd conCo;
-    conCo = (van.transpose()*van).inverse() * van.transpose();
-    return conCo;
-}
 
-Eigen::VectorXd makeYWin(const Eigen::VectorXd& data, const int& win_size, const int& start_loc)
-{
-    Eigen::VectorXd yWin(win_size);
-    for(int i = 0; i < win_size; i++)
+    SavGol(const py::kwargs& kwargs)
     {
-        yWin(i) = data(start_loc + i);
-    }
-    return yWin;
-}
+        data_in = py::cast<Eigen::VectorXd>(kwargs["data_in"]);
+        window_size = py::cast<int>(kwargs["window_size"]);
+        smoothing_degree = py::cast<int>(kwargs["smoothing_degree"]);
+        num_elements = py::cast<int>(kwargs["num_elements"]);
+        return_degree = py::cast<int>(kwargs["return_degree"]);
+        threaded = py::cast<bool>(kwargs["threaded"]);
 
-Eigen::VectorXd makeVecA(const Eigen::MatrixXd& conCo, const Eigen::VectorXd& yWin, const int& deg)
-{
-    Eigen::VectorXd vecA(deg + 1);
-    for(int i = 0; i <= deg; i++)
-    {
-        vecA(i) = (conCo.row(i)).dot(yWin);
-    }
-    return vecA;
-}
+        cout << num_elements << endl;
 
-Eigen::VectorXd savGolFilter(const py::kwargs& kwargs)
-{
-    auto data = py::cast<Eigen::VectorXd>(kwargs["data_in"]);
-    const int window_size = py::cast<const int>(kwargs["window_size"]);
-    const int smoothing_degree = py::cast<const int>(kwargs["smoothing_degree"]);
-    const int num_elements = py::cast<const int>(kwargs["num_elements"]);
-    const int return_degree = py::cast<const int>(kwargs["return_degree"]);
-    
-    Eigen::VectorXi xWin = makeXWin(window_size);
-    Eigen::MatrixXd conCo = makeConCo(xWin, window_size, smoothing_degree);
-    Eigen::VectorXd returnData = Eigen::VectorXd::Zero(num_elements);
-
-    if(return_degree == 0)
-    {
-        // Assign edge values
-        int start_loc = 0;
-        Eigen::VectorXd yWin = makeYWin(data, window_size, start_loc);
-        Eigen::VectorXd vecA = makeVecA(conCo, yWin, smoothing_degree);
-        int returnElement = 0;
-        while(returnElement < window_size/2)
+        // Make our normalized X window (if win_size = 5 then xWin = -2, -1, 0, 1, 2)
+        Eigen::VectorXi xPreWin(window_size);
+        for(int i = 0; i < window_size; i++)
         {
-            for(int j = 0; j <= smoothing_degree; j++)
+            xPreWin(i) = i + (1 - window_size)/2;
+        }
+        xWin = xPreWin;
+
+        // Make corelation coefficients
+        Eigen::MatrixXd van(window_size, smoothing_degree + 1);
+        for(int j = 0; j <= smoothing_degree; j++)
+        {
+            for(int i = 0; i < window_size; i++)
             {
-                returnData(returnElement) += vecA(j)*pow(xWin(returnElement), j);
+                van(i, j) = pow(xWin(i), j);
             }
-            returnElement++;
         }
-        start_loc++;
-
-        // Assign middle values
-        while(returnElement < (num_elements - window_size/2 - 1))
-        {
-            yWin = makeYWin(data, window_size, start_loc);
-            vecA = makeVecA(conCo, yWin, smoothing_degree);
-            returnData(returnElement) = vecA(0);
-
-            returnElement++;
-            start_loc++;
-        }
-
-        // Assign edge values
-        int z = window_size/2;
-        while(returnElement < num_elements)
-        {
-            for(int j = 0; j <= smoothing_degree; j++)
-            {
-                // cout << xWin << " element " << z << endl;
-                // cout << xWin(z) << " ^ " << j << endl;
-                // cout << vecA(j) << " * " << pow(xWin(z), j) << endl;
-                // cout << returnData(returnElement) << " + " << vecA(j)*pow(xWin(z), j) << endl;
-                returnData(returnElement) += vecA(j)*pow(xWin(z), j);
-                // cout << returnData(returnElement) << endl; 
-            }
-            returnElement++;
-            z++;
-        }
+        conCo = (van.transpose()*van).inverse() * van.transpose();
     }
-    else
+
+    deque<double> makePolynomial(int windowIndex)
     {
-        int start_loc = 0;
-        int returnElement = window_size/2;
-
-        // Assign middle values
-        while(returnElement < (num_elements - window_size/2 - 1))
+        Eigen::VectorXd yWin(window_size);
+        for(int i = 0; i < window_size; i++)
         {
-            Eigen::VectorXd yWin = makeYWin(data, window_size, start_loc);
-            Eigen::VectorXd vecA = makeVecA(conCo, yWin, smoothing_degree);
-            returnData(returnElement) = tgamma(return_degree + 1) * vecA(return_degree);
+            yWin(i) = data_in(windowIndex - window_size/2 + i);
+        }
 
-            returnElement++;
-            start_loc++;
+        deque<double> vecA;
+        for(int i = 0; i <= smoothing_degree; i++)
+        {
+            // cout << conCo.row(i) << " dot " << yWin << endl;
+            vecA.push_back((conCo.row(i)).dot(yWin));
+        }
+        // for (double n : vecA)
+        //     std::cout << n << ' ';
+        // std::cout << '\n';
+        return vecA;
+    }
+
+    void makeDerivative(deque<double>& coeffs)
+    {
+        int i = 0;
+        while(i < return_degree)
+        {
+            coeffs.pop_front();
+            for(int j = 0; j < coeffs.size(); j++)
+            {
+                coeffs[j] *= (j + 1);
+            }
+            i++;
         }
     }
 
-    return returnData;
-}
+    double eval(const deque<double>& coeffs, const int& z)
+    {
+        double bigy = 0;
+        for(int i = 0; i < coeffs.size(); i++)
+        {
+            bigy += coeffs[i]*pow(z, i);
+        }
+        return bigy;
+    }
+
+    // Start processing
+    void beginProcess(Eigen::VectorXd& returnData)
+    {
+        deque<double> coeffs = makePolynomial(window_size/2);
+        makeDerivative(coeffs);
+
+        for(int i = 0; i < window_size/2; i++)
+        {
+            cout << "******" << i << "******" << endl;
+            returnData(i) = eval(coeffs, xWin(i));
+        }
+        cout << "end beginning" << endl;
+    }
+
+    void middleProcess(Eigen::VectorXd& returnData)
+    {
+        for(int i = window_size/2; i < num_elements - window_size/2; i++)
+        {
+            deque<double> coeffs = makePolynomial(i);
+            makeDerivative(coeffs);
+            cout << "******" << i << "******" << endl;
+            returnData(i) = eval(coeffs, xWin(window_size/2));
+        }
+        cout << "end middle" << endl;
+    }
+
+    void endProcess(Eigen::VectorXd& returnData)
+    {
+        deque<double> coeffs = makePolynomial(num_elements - window_size/2 - 1);
+        makeDerivative(coeffs);
+        int j = window_size/2 + 1;
+        for(int i = num_elements - window_size/2; i < num_elements; i++)
+        {
+            cout << "******" << i << "******" << endl;
+            returnData(i) = eval(coeffs, xWin(j));
+            j++;
+        }
+        cout << "end end" << endl;
+    }
+
+    Eigen::VectorXd filter()
+    {
+        Eigen::VectorXd returnData = Eigen::VectorXd::Zero(num_elements);
+        beginProcess(returnData);
+        middleProcess(returnData);
+        endProcess(returnData);
+        return std::move(returnData);
+    }
+};
 
 PYBIND11_MODULE(savitzky_golay, m) {
-    m.doc() = "savGolFilter(input_vector, window_size, smoothing_degree, return_degree)";
+    m.doc() = "Please Work";
 
-    m.def("savGolFilter", &savGolFilter, "This is a Savitzky Golay filter function.");
+    py::class_<SavGol>(m, "SavGol")
+        .def(py::init<const py::kwargs&>())
+        .def("filter", &SavGol::filter);
 }
