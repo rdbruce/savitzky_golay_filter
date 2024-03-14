@@ -9,6 +9,7 @@
 #include <cmath>
 #include <thread>
 #include <deque>
+#include <future>
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/mean.hpp>
@@ -43,8 +44,6 @@ public:
         return_degree = py::cast<int>(kwargs["return_degree"]);
         threaded = py::cast<bool>(kwargs["threaded"]);
 
-        cout << num_elements << endl;
-
         // Make our normalized X window (if win_size = 5 then xWin = -2, -1, 0, 1, 2)
         Eigen::VectorXi xPreWin(window_size);
         for(int i = 0; i < window_size; i++)
@@ -57,9 +56,11 @@ public:
         Eigen::MatrixXd van(window_size, smoothing_degree + 1);
         for(int j = 0; j <= smoothing_degree; j++)
         {
+            van(all, j) = pow(xWin, j);
             for(int i = 0; i < window_size; i++)
             {
-                van(i, j) = pow(xWin(i), j);
+               
+                // van(i, j) = pow(xWin(i), j);
             }
         }
         conCo = (van.transpose()*van).inverse() * van.transpose();
@@ -123,9 +124,9 @@ public:
         cout << "end beginning" << endl;
     }
 
-    void middleProcess(Eigen::VectorXd& returnData)
+    void middleProcess(Eigen::VectorXd& returnData, int start, int end)
     {
-        for(int i = window_size/2; i < num_elements - window_size/2; i++)
+        for(int i = start; i < end; i++)
         {
             deque<double> coeffs = makePolynomial(i);
             makeDerivative(coeffs);
@@ -152,9 +153,36 @@ public:
     Eigen::VectorXd filter()
     {
         Eigen::VectorXd returnData = Eigen::VectorXd::Zero(num_elements);
-        beginProcess(returnData);
-        middleProcess(returnData);
-        endProcess(returnData);
+        if(!threaded)
+        {
+            beginProcess(returnData);
+            middleProcess(returnData, window_size/2, num_elements - window_size/2);
+            endProcess(returnData);
+        }
+        else if(threaded)
+        {
+            int processor_count = std::thread::hardware_concurrency();
+            async([&](){beginProcess(returnData);});
+            processor_count--;
+            async([&](){endProcess(returnData);});
+            processor_count--;
+
+            int middleElements = num_elements - window_size + 1;
+            int middleElementBlock = middleElements/processor_count;
+            cout << middleElements << " elements split into " << middleElementBlock << " element blocks." << endl;
+            int start = window_size/2;
+            int end = start + middleElementBlock;
+            for(int i = 0; i < processor_count; i++)
+            {
+                if(i == processor_count - 1)
+                {
+                    end = num_elements - window_size/2;
+                }
+                async([&](){middleProcess(returnData, start, end);});
+                start = start + middleElementBlock;
+                end = start + middleElementBlock;
+            }
+        }
         return std::move(returnData);
     }
 };

@@ -6,5 +6,5 @@ CXX_DEFINES = -DVERSION_INFO=0.0.1 -Dsavitzky_golay_EXPORTS
 
 CXX_INCLUDES = -I/usr/local/include/eigen3 -isystem /home/robert/.local/include -isystem /usr/include/python3.10
 
-CXX_FLAGS = -O3 -DNDEBUG -fPIC -fvisibility=hidden -flto -fno-fat-lto-objects
+CXX_FLAGS = -O3 -O3 -DNDEBUG -fPIC -fvisibility=hidden -flto -fno-fat-lto-objects
 

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(savitzky_golay)
 
+set(CMAKE_CXX_FLAGS "-O3")
+
 # add_subdirectory(pybind11)
 find_package(pybind11 CONFIG)
 pybind11_add_module(savitzky_golay src/main.cpp)
