@@ -3,6 +3,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/eigen.h>
 #include <Eigen/Dense>
+#include <Eigen/Sparse>
 #include <vector>
 #include <iostream>
 #include <stdexcept>
@@ -10,11 +11,7 @@
 #include <thread>
 #include <deque>
 #include <future>
-#include <boost/accumulators/accumulators.hpp>
-#include <boost/accumulators/statistics/stats.hpp>
-#include <boost/accumulators/statistics/mean.hpp>
-#include <boost/accumulators/statistics/variance.hpp>
-#include <boost/accumulators/framework/accumulator_set.hpp>
+#include <boost/core/demangle.hpp>
 
 using namespace std;
 
@@ -32,7 +29,7 @@ public:
     bool threaded;
 
     // C++ vars
-    Eigen::VectorXi xWin;
+    Eigen::ArrayXi xWin;
     Eigen::MatrixXd conCo;
 
     SavGol(const py::kwargs& kwargs)
@@ -45,7 +42,7 @@ public:
         threaded = py::cast<bool>(kwargs["threaded"]);
 
         // Make our normalized X window (if win_size = 5 then xWin = -2, -1, 0, 1, 2)
-        Eigen::VectorXi xPreWin(window_size);
+        Eigen::ArrayXi xPreWin(window_size);
         for(int i = 0; i < window_size; i++)
         {
             xPreWin(i) = i + (1 - window_size)/2;
@@ -56,12 +53,7 @@ public:
         Eigen::MatrixXd van(window_size, smoothing_degree + 1);
         for(int j = 0; j <= smoothing_degree; j++)
         {
-            van(all, j) = pow(xWin, j);
-            for(int i = 0; i < window_size; i++)
-            {
-               
-                // van(i, j) = pow(xWin(i), j);
-            }
+            van(Eigen::all, j) = xWin.pow(j).cast<double>();
         }
         conCo = (van.transpose()*van).inverse() * van.transpose();
     }
@@ -69,20 +61,14 @@ public:
     deque<double> makePolynomial(int windowIndex)
     {
         Eigen::VectorXd yWin(window_size);
-        for(int i = 0; i < window_size; i++)
-        {
-            yWin(i) = data_in(windowIndex - window_size/2 + i);
-        }
+        yWin = data_in(Eigen::seq(windowIndex - window_size/2, windowIndex + window_size/2));
 
+        Eigen::ArrayXd tmp = conCo*yWin;
         deque<double> vecA;
         for(int i = 0; i <= smoothing_degree; i++)
         {
-            // cout << conCo.row(i) << " dot " << yWin << endl;
-            vecA.push_back((conCo.row(i)).dot(yWin));
+            vecA.push_back(tmp(i));
         }
-        // for (double n : vecA)
-        //     std::cout << n << ' ';
-        // std::cout << '\n';
         return vecA;
     }
 
@@ -136,6 +122,34 @@ public:
         cout << "end middle" << endl;
     }
 
+    void matrixMiddle(Eigen::VectorXd& returnData)
+    {
+        // for(int i = window_size/2; i < num_elements - window_size/2; i++)
+        // {
+        //     cout << "******" << i << "******" << endl;
+        //     returnData(i) = tgamma(return_degree - 1) * (conCo.row(return_degree)).dot(data_in(Eigen::seq(i - window_size/2, i + window_size/2)));
+        // }
+
+        int output_size = num_elements - window_size + 1; //rows
+
+        typedef Eigen::Triplet<double> T;
+        std::vector<T> tripletList;
+        tripletList.reserve(window_size * output_size);
+
+        for(int i = 0; i < output_size; i++)
+        {
+            for(int j = 0; j < window_size; j++)
+            {
+                tripletList.push_back(T(i, j + i, conCo(return_degree, j)));
+            }
+        }
+        Eigen::SparseMatrix<double, Eigen::RowMajor> mat(output_size, num_elements);
+        mat.setFromTriplets(tripletList.begin(), tripletList.end());
+
+        returnData(Eigen::seq(window_size/2, num_elements - window_size/2)) = mat * data_in;
+        cout << "end matrix middle" << endl;
+    }
+
     void endProcess(Eigen::VectorXd& returnData)
     {
         deque<double> coeffs = makePolynomial(num_elements - window_size/2 - 1);
@@ -156,7 +170,8 @@ public:
         if(!threaded)
         {
             beginProcess(returnData);
-            middleProcess(returnData, window_size/2, num_elements - window_size/2);
+            // middleProcess(returnData, window_size/2, num_elements - window_size/2);
+            matrixMiddle(returnData);
             endProcess(returnData);
         }
         else if(threaded)
